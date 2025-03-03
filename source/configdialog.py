@@ -15,8 +15,8 @@
 import re
 import copy
 import operator
-from PyQt5.QtCore import QPoint, QSize, Qt, pyqtSignal
-from PyQt5.QtGui import QTextCursor
+from PyQt5.QtCore import QPoint, QSize, Qt, pyqtSignal, QMimeData
+from PyQt5.QtGui import QTextCursor, QDrag, QPixmap
 from PyQt5.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup,
                              QCheckBox, QComboBox, QDialog, QGridLayout,
                              QGroupBox, QHBoxLayout, QLabel, QLineEdit,
@@ -70,6 +70,8 @@ class ConfigDialog(QDialog):
         self.tabs.addTab(fieldListPage, _('Field &List'))
         fieldConfigPage = FieldConfigPage(self)
         self.tabs.addTab(fieldConfigPage, _('&Field Config'))
+        typePanelPage = TypePanelPage(self)
+        self.tabs.addTab(typePanelPage, _('Type &Panel'))
         outputPage = OutputPage(self)
         self.tabs.addTab(outputPage, _('O&utput'))
         self.tabs.currentChanged.connect(self.updatePage)
@@ -913,6 +915,678 @@ class FieldListPage(ConfigPage):
 
 
 _fileInfoFormatName = _('File Info Reference')
+
+class TypePanelPage(ConfigPage):
+    """Config dialog page to customize field arrangement in a panel.
+    """
+    def __init__(self, parent=None):
+        """Initialize the config dialog page.
+
+        Arguments:
+            parent -- the parent overall dialog
+        """
+        super().__init__(parent)
+        topLayout = QVBoxLayout(self)
+        
+        # Top section - type selection and enable panel
+        typeBox = QGroupBox(_('&Data Type'))
+        topLayout.addWidget(typeBox)
+        typeLayout = QVBoxLayout(typeBox)
+        self.typeCombo = QComboBox()
+        typeLayout.addWidget(self.typeCombo)
+        self.typeCombo.currentIndexChanged[str].connect(self.changeCurrentType)
+        
+        optionsLayout = QHBoxLayout()
+        topLayout.addLayout(optionsLayout)
+        self.enablePanelCheck = QCheckBox(_('&Enable Custom Field Panel'))
+        optionsLayout.addWidget(self.enablePanelCheck)
+        self.enablePanelCheck.toggled.connect(self.toggleCustomPanel)
+        optionsLayout.addStretch()
+        
+        # Main editor area
+        self.editorBox = QGroupBox(_('Panel Layout Editor'))
+        topLayout.addWidget(self.editorBox)
+        editorLayout = QVBoxLayout(self.editorBox)
+        
+        # Create a scroll area for the panel designer
+        self.scrollArea = QScrollArea()
+        self.scrollArea.setWidgetResizable(True)
+        editorLayout.addWidget(self.scrollArea)
+        
+        # Container for the panel designer
+        self.panelWidget = self.PanelDesignerWidget(self)
+        self.scrollArea.setWidget(self.panelWidget)
+        self.panelLayout = QGridLayout(self.panelWidget)
+        self.panelLayout.setSpacing(10)
+        
+        # Initialize drag fields
+        self.dragStartPosition = None
+        self.currentDragField = None
+        
+        # Available fields list
+        fieldsBox = QGroupBox(_('Available Fields'))
+        editorLayout.addWidget(fieldsBox)
+        fieldsLayout = QHBoxLayout(fieldsBox)
+        
+        self.fieldListWidget = QListWidget()
+        fieldsLayout.addWidget(self.fieldListWidget)
+        self.fieldListWidget.setDragEnabled(True)
+        self.fieldListWidget.setDragDropMode(QAbstractItemView.DragOnly)
+        
+        buttonsLayout = QVBoxLayout()
+        fieldsLayout.addLayout(buttonsLayout)
+        
+        self.addFieldButton = QPushButton(_('Add to Panel'))
+        buttonsLayout.addWidget(self.addFieldButton)
+        self.addFieldButton.clicked.connect(self.addSelectedFieldToPanel)
+        
+        self.resetPanelButton = QPushButton(_('Reset Panel'))
+        buttonsLayout.addWidget(self.resetPanelButton)
+        self.resetPanelButton.clicked.connect(self.resetPanel)
+        
+        # Fields that have been placed in the panel
+        self.fieldWidgets = {}  # maps field names to their widgets in the panel
+        self.fieldPositions = {}  # maps field names to (row, column, rowspan, colspan) in the grid
+        
+        # Initialize with empty panel
+        self.initializePanel()
+        
+    class PanelDesignerWidget(QWidget):
+        """Custom widget to handle drag and drop operations in the panel designer."""
+        
+        def __init__(self, parent):
+            """Initialize the panel designer widget."""
+            super().__init__(parent)
+            self.parentPanel = parent
+            self.setAcceptDrops(True)
+            
+        def dragEnterEvent(self, event):
+            """Accept drag events with text data."""
+            if event.mimeData().hasText() or event.mimeData().hasFormat("application/x-qabstractitemmodeldatalist"):
+                event.acceptProposedAction()
+                
+        def dragMoveEvent(self, event):
+            """Handle drag move events, calculating the drop position."""
+            if event.mimeData().hasText() or event.mimeData().hasFormat("application/x-qabstractitemmodeldatalist"):
+                # Show visual feedback for the drop position
+                pos = event.pos()
+                cellSize = QSize(80, 80)  # Approximate cell size
+                gridX = pos.x() // cellSize.width()
+                gridY = pos.y() // cellSize.height()
+                
+                # Keep positions in bounds
+                gridX = max(0, min(gridX, 3))
+                gridY = max(0, min(gridY, 4))
+                
+                # TODO: Add visual feedback highlighting the target cell
+                
+                event.acceptProposedAction()
+                
+        def dropEvent(self, event):
+            """Handle drop events by moving the field to the drop position."""
+            fieldName = None
+            
+            # Extract field name from the mime data
+            if event.mimeData().hasText():
+                fieldName = event.mimeData().text()
+            elif event.mimeData().hasFormat("application/x-qabstractitemmodeldatalist"):
+                # This is a QListWidgetItem from the field list
+                source = event.source()
+                if isinstance(source, QListWidget):
+                    item = source.currentItem()
+                    if item:
+                        fieldName = item.text()
+            
+            if fieldName:
+                # Calculate grid position from drop coordinates
+                pos = event.pos()
+                # Find the closest grid cell
+                cellSize = QSize(80, 80)  # Approximate cell size
+                gridX = pos.x() // cellSize.width()
+                gridY = pos.y() // cellSize.height()
+                
+                # Keep positions in bounds
+                gridX = max(0, min(gridX, 3))
+                gridY = max(0, min(gridY, 4))
+                
+                # If this is a field from the panel, move it
+                if fieldName in self.parentPanel.fieldPositions:
+                    self.parentPanel.moveFieldInPanel(fieldName, gridY, gridX)
+                # Otherwise add it from the available fields
+                else:
+                    self.parentPanel.addSelectedFieldToPanel(fieldName, gridY, gridX)
+                
+                # Mark as modified so changes get saved
+                self.parentPanel.mainDialogRef.setModified()
+                
+                event.acceptProposedAction()
+    
+    def initializePanel(self):
+        """Set up an empty panel layout."""
+        # Clear existing layout
+        self.clearPanel()
+        
+        # Create a default grid
+        for row in range(5):
+            for col in range(4):
+                spacer = QWidget()
+                spacer.setMinimumSize(50, 50)
+                spacer.setStyleSheet('background-color: #f0f0f0; border: 1px dashed #cccccc;')
+                self.panelLayout.addWidget(spacer, row, col)
+        
+    def clearPanel(self):
+        """Remove all widgets from the panel."""
+        # Remove all widgets from the grid layout
+        while self.panelLayout.count():
+            item = self.panelLayout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        
+        # Clear our tracking dictionaries
+        self.fieldWidgets.clear()
+        self.fieldPositions.clear()
+                
+    def updateContent(self):
+        """Update page contents from current format settings."""
+        # Update type combo
+        typeNames = ConfigDialog.formatsRef.typeNames()
+        self.typeCombo.blockSignals(True)
+        self.typeCombo.clear()
+        self.typeCombo.addItems(typeNames)
+        self.typeCombo.setCurrentIndex(typeNames.index(ConfigDialog.currentTypeName))
+        self.typeCombo.blockSignals(False)
+        
+        # Get current format
+        currentFormat = ConfigDialog.formatsRef[ConfigDialog.currentTypeName]
+        
+        # Update panel enable checkbox
+        self.enablePanelCheck.blockSignals(True)
+        self.enablePanelCheck.setChecked(currentFormat.useCustomPanel)
+        self.enablePanelCheck.blockSignals(False)
+        
+        # Update field list
+        self.updateFieldList()
+        
+        # Update panel layout
+        self.updatePanelLayout()
+        
+        # Update UI state based on whether custom panel is enabled
+        self.toggleCustomPanel(currentFormat.useCustomPanel)
+    
+    class DraggableFieldItem(QListWidgetItem):
+        """List widget item that supports dragging for fields."""
+        
+        def __init__(self, text, parent=None):
+            """Initialize the draggable field item."""
+            super().__init__(text, parent)
+            self.setFlags(self.flags() | Qt.ItemIsDragEnabled | Qt.ItemIsSelectable)
+    
+    def updateFieldList(self):
+        """Update the list of available fields."""
+        currentFormat = ConfigDialog.formatsRef[ConfigDialog.currentTypeName]
+        
+        self.fieldListWidget.clear()
+        
+        # Add all fields to the list
+        for fieldName in currentFormat.fieldNames():
+            # Add field to the list if it's not already in the panel
+            if fieldName not in self.fieldWidgets:
+                item = self.DraggableFieldItem(fieldName)
+                self.fieldListWidget.addItem(item)
+    
+    def updatePanelLayout(self):
+        """Update the panel layout from the current format."""
+        currentFormat = ConfigDialog.formatsRef[ConfigDialog.currentTypeName]
+        
+        # Clear existing panel
+        self.clearPanel()
+        
+        if currentFormat.useCustomPanel and currentFormat.panelLayout:
+            # Recreate the panel from saved layout
+            for fieldInfo in currentFormat.panelLayout:
+                fieldName = fieldInfo.get('name', '')
+                row = fieldInfo.get('row', 0)
+                col = fieldInfo.get('col', 0)
+                rowspan = fieldInfo.get('rowspan', 1)
+                colspan = fieldInfo.get('colspan', 1)
+                
+                if fieldName in currentFormat.fieldNames():
+                    self.addFieldToPanel(fieldName, row, col, rowspan, colspan)
+        else:
+            # Initialize with an empty panel
+            self.initializePanel()
+    
+    class PanelFieldWidget(QGroupBox):
+        """A custom widget for a field in the panel layout.
+        
+        Supports drag and drop operations for rearranging the panel.
+        """
+        def __init__(self, fieldName, parent, rowspan=1, colspan=1):
+            """Initialize the panel field widget."""
+            # Ensure field name is a string before passing to QGroupBox constructor
+            if not isinstance(fieldName, str):
+                title = str(fieldName)  # Convert to string
+                print(f"Warning: Converting non-string field name {fieldName} to string")
+            else:
+                title = fieldName
+                
+            super().__init__(title, parent)
+            self.parentPanel = parent
+            self.fieldName = fieldName
+            self.rowspan = rowspan
+            self.colspan = colspan
+            self.setStyleSheet('background-color: #e0e0ff; border: 1px solid #9090c0;')
+            
+            # Enable dragging
+            self.setMouseTracking(True)
+            self.dragStartPos = None
+            
+            # Setup the layout
+            fieldLayout = QVBoxLayout(self)
+            
+            # Add a label showing the field name
+            fieldLabel = QLabel(fieldName)
+            fieldLayout.addWidget(fieldLabel)
+            
+            # Add buttons for removing the field or editing its position
+            buttonLayout = QHBoxLayout()
+            fieldLayout.addLayout(buttonLayout)
+            
+            removeButton = QPushButton(_("Remove"))
+            removeButton.clicked.connect(lambda: parent.removeFieldFromPanel(fieldName))
+            buttonLayout.addWidget(removeButton)
+            
+            # Add span controls
+            spanLayout = QHBoxLayout()
+            fieldLayout.addLayout(spanLayout)
+            
+            # Add row span controls
+            rowSpanLabel = QLabel(_("Row Span:"))
+            spanLayout.addWidget(rowSpanLabel)
+            self.rowSpanSpin = QSpinBox()
+            self.rowSpanSpin.setMinimum(1)
+            self.rowSpanSpin.setMaximum(5)
+            self.rowSpanSpin.setValue(rowspan)
+            self.rowSpanSpin.valueChanged.connect(lambda v: parent.updateFieldSpan(fieldName, rowspan=v))
+            spanLayout.addWidget(self.rowSpanSpin)
+            
+            # Add column span controls
+            colSpanLabel = QLabel(_("Col Span:"))
+            spanLayout.addWidget(colSpanLabel)
+            self.colSpanSpin = QSpinBox()
+            self.colSpanSpin.setMinimum(1)
+            self.colSpanSpin.setMaximum(4)
+            self.colSpanSpin.setValue(colspan)
+            self.colSpanSpin.valueChanged.connect(lambda v: parent.updateFieldSpan(fieldName, colspan=v))
+            spanLayout.addWidget(self.colSpanSpin)
+            
+        def mousePressEvent(self, event):
+            """Handle mouse press events for drag operations."""
+            if event.button() == Qt.LeftButton:
+                self.dragStartPos = event.pos()
+            super().mousePressEvent(event)
+            
+        def mouseMoveEvent(self, event):
+            """Handle mouse move events for drag operations."""
+            if not (event.buttons() & Qt.LeftButton) or not self.dragStartPos:
+                return
+                
+            # Calculate the distance to determine if this is a drag
+            distance = (event.pos() - self.dragStartPos).manhattanLength()
+            if distance < QApplication.startDragDistance():
+                return
+                
+            # Start drag operation
+            drag = QDrag(self)
+            mimeData = QMimeData()
+            mimeData.setText(self.fieldName)
+            drag.setMimeData(mimeData)
+            
+            # Provide visual feedback
+            pixmap = QPixmap(self.size())
+            self.render(pixmap)
+            drag.setPixmap(pixmap)
+            drag.setHotSpot(event.pos())
+            
+            # Clear the drag start position to prevent multiple drags
+            self.dragStartPos = None
+            
+            # Execute the drag
+            result = drag.exec_(Qt.MoveAction)
+            
+            # Mark as modified regardless of result to ensure layout is saved
+            self.parentPanel.mainDialogRef.setModified()
+            
+        def updateSpinners(self, rowspan, colspan):
+            """Update the spinner values without triggering signals."""
+            self.rowSpanSpin.blockSignals(True)
+            self.colSpanSpin.blockSignals(True)
+            self.rowSpanSpin.setValue(rowspan)
+            self.colSpanSpin.setValue(colspan)
+            self.rowSpanSpin.blockSignals(False)
+            self.colSpanSpin.blockSignals(False)
+    
+    def addFieldToPanel(self, fieldName, row, col, rowspan=1, colspan=1):
+        """Add a field to the panel at the specified position."""
+        # Ensure fieldName is a string
+        if not isinstance(fieldName, str):
+            print(f"Warning: Field name {fieldName} is not a string")
+            return
+            
+        # Create a widget to represent the field
+        fieldWidget = self.PanelFieldWidget(fieldName, self, rowspan, colspan)
+        
+        # Store the widget and its position
+        self.fieldWidgets[fieldName] = fieldWidget
+        self.fieldPositions[fieldName] = (row, col, rowspan, colspan)
+        
+        # Add the widget to the grid
+        self.panelLayout.addWidget(fieldWidget, row, col, rowspan, colspan)
+        
+        # Update the available fields list
+        self.updateFieldList()
+        
+    def updateFieldSpan(self, fieldName, rowspan=None, colspan=None):
+        """Update the row or column span of a field in the panel."""
+        if fieldName not in self.fieldWidgets:
+            return
+            
+        # Get current position
+        row, col, current_rowspan, current_colspan = self.fieldPositions[fieldName]
+        
+        # Update spans if provided
+        if rowspan is not None:
+            current_rowspan = rowspan
+        if colspan is not None:
+            current_colspan = colspan
+            
+        # Check for overlapping positions
+        for otherName, otherPos in self.fieldPositions.items():
+            if otherName == fieldName:
+                continue
+                
+            otherRow, otherCol, otherRowspan, otherColspan = otherPos
+            
+            # Check if there would be overlap
+            if (row < otherRow + otherRowspan and row + current_rowspan > otherRow and
+                col < otherCol + otherColspan and col + current_colspan > otherCol):
+                # Overlapping - reject this change
+                return
+            
+        # Remove the widget temporarily
+        widget = self.fieldWidgets[fieldName]
+        self.panelLayout.removeWidget(widget)
+        
+        # Update position information
+        self.fieldPositions[fieldName] = (row, col, current_rowspan, current_colspan)
+        
+        # Add the widget back with new span
+        self.panelLayout.addWidget(widget, row, col, current_rowspan, current_colspan)
+        
+        # Mark as modified
+        self.mainDialogRef.setModified()
+    
+    def removeFieldFromPanel(self, fieldName):
+        """Remove a field from the panel."""
+        if fieldName in self.fieldWidgets:
+            # Remove the widget
+            widget = self.fieldWidgets[fieldName]
+            self.panelLayout.removeWidget(widget)
+            widget.deleteLater()
+            
+            # Clean up tracking dictionaries
+            del self.fieldWidgets[fieldName]
+            del self.fieldPositions[fieldName]
+            
+            # Update the available fields list
+            self.updateFieldList()
+            
+            # Mark as modified
+            self.mainDialogRef.setModified()
+    
+    def addSelectedFieldToPanel(self, fieldName=None, targetRow=None, targetCol=None):
+        """Add the selected field from the field list to the panel.
+        
+        Arguments:
+            fieldName -- optional, the field name to add (if None, uses selection)
+            targetRow -- optional, the row to place the field
+            targetCol -- optional, the column to place the field
+        """
+        # Get the field name to add
+        if fieldName is None:
+            selectedItems = self.fieldListWidget.selectedItems()
+            if not selectedItems:
+                return
+            fieldName = selectedItems[0].text()
+        
+        # Ensure we have a valid string as the field name
+        if not isinstance(fieldName, str):
+            print(f"Warning: Invalid field name type: {type(fieldName)}")
+            return
+            
+        # If already in panel, don't add again
+        if fieldName in self.fieldWidgets:
+            return
+            
+        # If target position provided, try to use it
+        if targetRow is not None and targetCol is not None:
+            # Check if this cell is occupied
+            occupied = False
+            for pos in self.fieldPositions.values():
+                r, c, rs, cs = pos
+                if (targetRow >= r and targetRow < r + rs and 
+                    targetCol >= c and targetCol < c + cs):
+                    occupied = True
+                    break
+                    
+            if not occupied:
+                # Add the field to this cell
+                try:
+                    self.addFieldToPanel(fieldName, targetRow, targetCol)
+                    self.mainDialogRef.setModified()
+                    return
+                except Exception as e:
+                    print(f"Error adding field to panel: {e}")
+                    return
+        
+        # No valid target position, find first available cell
+        for row in range(5):
+            for col in range(4):
+                # Check if this cell is occupied by any field
+                occupied = False
+                for pos in self.fieldPositions.values():
+                    r, c, rs, cs = pos
+                    if (row >= r and row < r + rs and 
+                        col >= c and col < c + cs):
+                        occupied = True
+                        break
+                
+                if not occupied:
+                    # Add the field to this cell
+                    try:
+                        self.addFieldToPanel(fieldName, row, col)
+                        self.mainDialogRef.setModified()
+                        return
+                    except Exception as e:
+                        print(f"Error adding field to panel: {e}")
+                        return
+        
+        # If we got here, there was no empty cell
+        # We could expand the grid or show an error
+        
+    def moveFieldInPanel(self, fieldName, newRow, newCol):
+        """Move a field that's already in the panel to a new position.
+        
+        Arguments:
+            fieldName -- the name of the field to move
+            newRow -- the new row position
+            newCol -- the new column position
+        """
+        if fieldName not in self.fieldPositions or fieldName not in self.fieldWidgets:
+            return
+            
+        # Get current position and spans
+        _, _, rowspan, colspan = self.fieldPositions[fieldName]
+        
+        # Check if the target position is valid (not overlapping other fields)
+        for otherName, otherPos in self.fieldPositions.items():
+            if otherName == fieldName:
+                continue
+                
+            otherRow, otherCol, otherRowspan, otherColspan = otherPos
+            
+            # Check if there would be overlap at the new position
+            if (newRow < otherRow + otherRowspan and newRow + rowspan > otherRow and
+                newCol < otherCol + otherColspan and newCol + colspan > otherCol):
+                # Overlapping - reject this move
+                return
+                
+        # Remove the widget from its current position
+        widget = self.fieldWidgets[fieldName]
+        self.panelLayout.removeWidget(widget)
+        
+        # Update position information
+        self.fieldPositions[fieldName] = (newRow, newCol, rowspan, colspan)
+        
+        # Add the widget back with the new position
+        self.panelLayout.addWidget(widget, newRow, newCol, rowspan, colspan)
+        
+        # Make sure the layout widget is updated
+        self.panelWidget.update()
+        
+        # Mark as modified to ensure the change gets saved
+        self.mainDialogRef.setModified()
+    
+    def resetPanel(self):
+        """Reset the panel layout to default."""
+        self.clearPanel()
+        self.initializePanel()
+        self.updateFieldList()
+        self.mainDialogRef.setModified()
+    
+    def toggleCustomPanel(self, enabled):
+        """Enable or disable the panel editor."""
+        self.editorBox.setEnabled(enabled)
+        if enabled:
+            currentFormat = ConfigDialog.formatsRef[ConfigDialog.currentTypeName]
+            # Auto-generate panel layout if none exists
+            if not currentFormat.panelLayout:
+                currentFormat.panelLayout = self.generateDefaultPanelLayout(currentFormat)
+            # Update the panel layout
+            self.updatePanelLayout()
+        self.mainDialogRef.setModified()
+        
+    def generateDefaultPanelLayout(self, format):
+        """Generate a default panel layout based on the fields in the format.
+        
+        Arguments:
+            format -- the NodeFormat object to generate a layout for
+        Returns:
+            A list of panel layout items
+        """
+        layout = []
+        fields = format.fieldNames()
+        # Filter out numbering and math fields if needed
+        if not globalref.genOptions['EditNumbering']:
+            fields = [field for field in fields
+                     if format.fieldDict[field].typeName != 'Numbering']
+        if not globalref.genOptions['ShowMath']:
+            fields = [field for field in fields
+                     if format.fieldDict[field].typeName != 'Math']
+        
+        # Generate a grid layout (2 columns)
+        row = 0
+        col = 0
+        maxCol = 2  # 2 columns in the grid
+        
+        # First pass - identify which fields need full-width placement
+        fullWidthFields = []
+        normalFields = []
+        
+        for fieldName in fields:
+            field = format.fieldDict[fieldName]
+            
+            # Fields that should take full width
+            if (field.numLines > 1 or 
+                field.typeName in ('Text', 'HtmlText', 'ExternalLink', 'InternalLink', 'Picture') or
+                len(fieldName) > 15):  # Long field names get full width
+                fullWidthFields.append(fieldName)
+            else:
+                normalFields.append(fieldName)
+        
+        # Place normal fields first in a grid
+        normalCount = len(normalFields)
+        normalPairs = [(normalFields[i], normalFields[i+1]) if i+1 < normalCount else 
+                       (normalFields[i], None) for i in range(0, normalCount, 2)]
+        
+        for pair in normalPairs:
+            # Place first field
+            layout.append({
+                'name': pair[0],
+                'row': row,
+                'col': 0,
+                'rowspan': 1,
+                'colspan': 1
+            })
+            
+            # Place second field if it exists
+            if pair[1]:
+                layout.append({
+                    'name': pair[1],
+                    'row': row,
+                    'col': 1,
+                    'rowspan': 1,
+                    'colspan': 1
+                })
+            
+            row += 1
+        
+        # Place full-width fields
+        for fieldName in fullWidthFields:
+            field = format.fieldDict[fieldName]
+            
+            # Determine rowspan based on numLines
+            rowspan = max(1, min(4, field.numLines // 2))
+            
+            layout.append({
+                'name': fieldName,
+                'row': row,
+                'col': 0,
+                'rowspan': rowspan,
+                'colspan': 2
+            })
+            
+            row += rowspan
+        
+        return layout
+    
+    def saveLayoutToFormat(self):
+        """Save the current panel layout to the format."""
+        currentFormat = ConfigDialog.formatsRef[ConfigDialog.currentTypeName]
+        
+        # Update useCustomPanel flag
+        currentFormat.useCustomPanel = self.enablePanelCheck.isChecked()
+        
+        # If enabled, save the layout
+        if currentFormat.useCustomPanel:
+            layout = []
+            for fieldName, position in self.fieldPositions.items():
+                row, col, rowspan, colspan = position
+                layout.append({
+                    'name': fieldName,
+                    'row': row,
+                    'col': col,
+                    'rowspan': rowspan,
+                    'colspan': colspan
+                })
+            currentFormat.panelLayout = layout
+            
+            # Update any derived types that inherit from this generic type
+            currentFormat.updateDerivedTypes()
+    
+    def readChanges(self):
+        """Save changes to the format."""
+        self.saveLayoutToFormat()
 
 class FieldConfigPage(ConfigPage):
     """Config dialog page to change parmaters of a field.

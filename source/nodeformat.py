@@ -60,6 +60,8 @@ class NodeFormat:
         self.derivedTypes = []
         self.origOutputLines = [] # lines without bullet or table modifications
         self.sortFields = []   # temporary storage while sorting
+        self.useCustomPanel = False # whether to use custom panel layout
+        self.panelLayout = []  # layout information for Type Panel
         if addDefaultField:
             self.addFieldIfNew(defaultFieldName)
             self.titleLine = ['{{*{0}*}}'.format(defaultFieldName)]
@@ -101,6 +103,8 @@ class NodeFormat:
         self.iconName = formatData.get('icon', '')
         self.outputSeparator = formatData.get('outputsep',
                                               _defaultOutputSeparator)
+        self.useCustomPanel = formatData.get('customPanel', False)
+        self.panelLayout = formatData.get('panelLayout', [])
         for key in formatData.keys():
             if key.startswith('cond-'):
                 self.savedConditionText[key[5:]] = formatData[key]
@@ -133,6 +137,9 @@ class NodeFormat:
             formatData['icon'] = self.iconName
         if self.outputSeparator != _defaultOutputSeparator:
             formatData['outputsep'] = self.outputSeparator
+        if self.useCustomPanel:
+            formatData['customPanel'] = True
+            formatData['panelLayout'] = self.panelLayout
         for key, text in self.savedConditionText.items():
             formatData['cond-' + key] = text
         return formatData
@@ -149,6 +156,8 @@ class NodeFormat:
         self.siblingSuffix = sourceFormat.siblingSuffix
         self.outputLines = sourceFormat.getOutputLines(False)
         self.origOutputLines = sourceFormat.getOutputLines()
+        self.useCustomPanel = sourceFormat.useCustomPanel
+        self.panelLayout = sourceFormat.panelLayout.copy() if sourceFormat.panelLayout else []
         self.updateLineParsing()
 
     def fields(self):
@@ -470,6 +479,14 @@ class NodeFormat:
             else:
                 newFields[field.name] = copy.deepcopy(field)
         self.fieldDict = newFields
+        
+        # Also copy panel settings from the generic type - use a deep copy to avoid reference issues
+        self.useCustomPanel = genericType.useCustomPanel
+        if genericType.panelLayout:
+            self.panelLayout = copy.deepcopy(genericType.panelLayout)
+        else:
+            self.panelLayout = []
+            
         self.updateLineParsing()
 
     def addBullets(self):

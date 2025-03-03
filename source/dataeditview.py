@@ -449,7 +449,10 @@ class DataEditView(QTableWidget):
             self.setRowCount(100000)
             rowNum = -2
             for spot in selSpots:
-                rowNum = self.addNodeData(spot, rowNum + 2)
+                if spot.nodeRef.formatRef.useCustomPanel:
+                    rowNum = self.addCustomPanelData(spot, rowNum + 2)
+                else:
+                    rowNum = self.addNodeData(spot, rowNum + 2)
             self.setRowCount(rowNum + 1)
             self.adjustSizes()
             self.scrollToTop()
@@ -486,6 +489,98 @@ class DataEditView(QTableWidget):
         self.setItem(row + 1, 0, self.createInactiveCell(''))
         self.setItem(row + 1, 1, self.createInactiveCell(''))
         return row
+        
+    def addCustomPanelData(self, spot, startRow):
+        """Populate the view with the data from the given node using a custom panel layout.
+
+        Returns the last row number used.
+        Arguments:
+            spot -- the spot to add
+            startRow -- the row offset
+        """
+        node = spot.nodeRef
+        formatName = node.formatRef.name
+        typeCell = self.createInactiveCell(formatName)
+        self.setItem(startRow, 0, typeCell)
+        titleCell = self.createInactiveCell(node.title(spot))
+        self.setItem(startRow, 1, titleCell)
+        
+        # Filter fields based on options
+        fields = node.formatRef.fields()
+        if not globalref.genOptions['EditNumbering']:
+            fields = [field for field in fields
+                      if field.typeName != 'Numbering']
+        if not globalref.genOptions['ShowMath']:
+            fields = [field for field in fields
+                      if field.typeName != 'Math']
+        
+        # Create a field name to field object mapping
+        fieldDict = {field.name: field for field in fields}
+        
+        # Calculate the grid dimensions
+        maxRow = 0
+        maxCol = 0
+        for fieldInfo in node.formatRef.panelLayout:
+            row = fieldInfo.get('row', 0) + startRow + 1
+            col = fieldInfo.get('col', 0)
+            rowspan = fieldInfo.get('rowspan', 1)
+            colspan = fieldInfo.get('colspan', 1)
+            maxRow = max(maxRow, row + rowspan - 1)
+            maxCol = max(maxCol, col + colspan - 1)
+        
+        # Ensure we have enough columns
+        colCount = max(maxCol + 1, 4) * 2  # At least 4 columns for the panel, multiplied by 2 for label+editor pairs
+        if self.columnCount() < colCount:
+            self.setColumnCount(colCount)
+        
+        # First, create a grid of empty cells to ensure proper layout
+        for row in range(startRow + 1, maxRow + 2):
+            for col in range(colCount):
+                if self.item(row, col) is None:
+                    self.setItem(row, col, self.createInactiveCell(''))
+        
+        # Create field entry for each field in the layout
+        for fieldInfo in node.formatRef.panelLayout:
+            fieldName = fieldInfo.get('name', '')
+            if fieldName in fieldDict:
+                row = fieldInfo.get('row', 0) + startRow + 1
+                col = fieldInfo.get('col', 0) * 2  # Use 2 columns per field
+                rowspan = fieldInfo.get('rowspan', 1)
+                colspan = fieldInfo.get('colspan', 1) * 2  # Adjust for 2 cols per field
+                
+                # First, remove any spans that might exist in the target area
+                for r in range(row, row + rowspan):
+                    for c in range(col, col + colspan):
+                        self.setSpan(r, c, 1, 1)  # Reset to no span
+                
+                # Set the label in the first column
+                self.setItem(row, col, self.createInactiveCell(fieldName,
+                                                               Qt.AlignRight |
+                                                               Qt.AlignVCenter))
+                
+                # Set the editor in the next column
+                editorCol = col + 1
+                editorCell = DataEditCell(spot, fieldDict[fieldName], titleCell, typeCell)
+                self.setItem(row, editorCol, editorCell)
+                
+                # Apply spans
+                try:
+                    if rowspan > 1:
+                        self.setSpan(row, col, rowspan, 1)  # Span rows for label
+                    
+                    if rowspan > 1 or colspan > 1:
+                        # Span the editor cell
+                        self.setSpan(row, editorCol, rowspan, colspan - 1 if colspan > 1 else 1)
+                except Exception as e:
+                    # Ignore setSpan errors - these are harmless warnings
+                    pass
+                    # print(f"QTableView::setSpan warning: {e}")  # Debug only
+        
+        # Add empty row at the end
+        self.setItem(maxRow + 1, 0, self.createInactiveCell(''))
+        self.setItem(maxRow + 1, 1, self.createInactiveCell(''))
+        
+        return maxRow + 1
 
     def updateUnselectedCells(self):
         """Refresh the data in active cells, keeping the cell structure.
@@ -503,7 +598,10 @@ class DataEditView(QTableWidget):
             return
         rowNum = -2
         for spot in selSpots:
-            rowNum = self.refreshNodeData(spot, rowNum + 2)
+            if spot.nodeRef.formatRef.useCustomPanel:
+                rowNum = self.refreshCustomPanelData(spot, rowNum + 2)
+            else:
+                rowNum = self.refreshNodeData(spot, rowNum + 2)
 
     def refreshNodeData(self, spot, startRow):
         """Refresh the data in active cells for this node.
@@ -527,6 +625,34 @@ class DataEditView(QTableWidget):
             if not cell.isSelected():
                 cell.updateText()
         return row
+        
+    def refreshCustomPanelData(self, spot, startRow):
+        """Refresh the data in active cells for this node with custom panel layout.
+
+        Returns the last row number used.
+        Arguments:
+            spot -- the spot to refresh
+            startRow -- the row offset
+        """
+        node = spot.nodeRef
+        self.item(startRow, 1).setText(node.title(spot))
+        
+        # Calculate the grid dimensions
+        maxRow = 0
+        for fieldInfo in node.formatRef.panelLayout:
+            row = fieldInfo.get('row', 0) + startRow + 1
+            rowspan = fieldInfo.get('rowspan', 1)
+            maxRow = max(maxRow, row + rowspan - 1)
+            
+            fieldName = fieldInfo.get('name', '')
+            col = fieldInfo.get('col', 0) * 2 + 1  # Add 1 for editor column
+            
+            # Find the cell at this position
+            cell = self.item(row, col)
+            if cell and isinstance(cell, DataEditCell) and not cell.isSelected():
+                cell.updateText()
+                
+        return maxRow
 
     @staticmethod
     def createInactiveCell(text, alignment=None):
