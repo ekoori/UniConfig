@@ -151,13 +151,12 @@ class NodeFormat:
             sourceFormat -- the format to copy
         """
         self.name = sourceFormat.name
-        self.readFormat(sourceFormat.storeFormat())
+        formatData = sourceFormat.storeFormat()
+        self.readFormat(formatData)
         self.siblingPrefix = sourceFormat.siblingPrefix
         self.siblingSuffix = sourceFormat.siblingSuffix
         self.outputLines = sourceFormat.getOutputLines(False)
         self.origOutputLines = sourceFormat.getOutputLines()
-        self.useCustomPanel = sourceFormat.useCustomPanel
-        self.panelLayout = sourceFormat.panelLayout.copy() if sourceFormat.panelLayout else []
         self.updateLineParsing()
 
     def fields(self):

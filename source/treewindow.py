@@ -23,6 +23,7 @@ import breadcrumbview
 import outputview
 import dataeditview
 import titlelistview
+import threedview
 import treenode
 import globalref
 
@@ -128,6 +129,10 @@ class TreeWindow(QMainWindow):
         childTitleView = titlelistview.TitleListView(self.treeView, True)
         childTitleView.shortcutEntered.connect(self.execShortcut)
         self.titleSplitter.addWidget(childTitleView)
+        
+        # Add 3D visualization view
+        self.threeDView = threedview.ThreeDViewWidget(self.treeView.model())
+        self.rightTabs.addTab(self.threeDView, _('3D View'))
 
         self.rightTabs.currentChanged.connect(self.updateRightViews)
         self.updateFonts()
@@ -193,17 +198,24 @@ class TreeWindow(QMainWindow):
             self.rightTabActList[self.rightTabs.
                                  currentIndex()].setChecked(True)
             self.breadcrumbView.updateContents()
-            splitter = self.rightTabs.currentWidget()
-            if not outputOnly or isinstance(splitter.widget(0),
-                                            outputview.OutputView):
-                for i in range(2):
-                    splitter.widget(i).updateContents()
+            current_widget = self.rightTabs.currentWidget()
+            
+            # Handle ThreeDViewWidget specifically
+            if isinstance(current_widget, threedview.ThreeDViewWidget):
+                if hasattr(current_widget, 'update_scene'):
+                    current_widget.update_scene()
+            # Handle splitter widgets
+            elif hasattr(current_widget, 'widget'):
+                if not outputOnly or isinstance(current_widget.widget(0),
+                                                outputview.OutputView):
+                    for i in range(2):
+                        current_widget.widget(i).updateContents()
 
     def refreshDataEditViews(self):
         """Refresh the data in non-selected cells in curreent data edit views.
         """
         splitter = self.rightTabs.currentWidget()
-        if isinstance(splitter.widget(0), dataeditview.DataEditView):
+        if hasattr(splitter, 'widget') and isinstance(splitter.widget(0), dataeditview.DataEditView):
             for i in range(2):
                 splitter.widget(i).updateUnselectedCells()
 
@@ -404,7 +416,13 @@ class TreeWindow(QMainWindow):
                                   statusTip=_('Show title list in right view'),
                                   checkable=True)
         self.winActions['ViewTitleList'] = viewTitleAct
-        self.rightTabActList = [viewOutputAct, viewEditAct, viewTitleAct]
+        
+        viewThreeDViewAct = QAction(_('Show &3D View'), viewRightTabGrp,
+                                  statusTip=_('Show 3D visualization in right view'),
+                                  checkable=True)
+        self.winActions['ViewThreeDView'] = viewThreeDViewAct
+        
+        self.rightTabActList = [viewOutputAct, viewEditAct, viewTitleAct, viewThreeDViewAct]
         viewRightTabGrp.triggered.connect(self.viewRightTab)
 
         viewBreadcrumbAct = QAction(_('Show &Breadcrumb View'), self,
@@ -614,6 +632,7 @@ class TreeWindow(QMainWindow):
         viewMenu.addAction(self.allActions['ViewDataOutput'])
         viewMenu.addAction(self.allActions['ViewDataEditor'])
         viewMenu.addAction(self.allActions['ViewTitleList'])
+        viewMenu.addAction(self.allActions['ViewThreeDView'])
         viewMenu.addSeparator()
         viewMenu.addAction(self.allActions['ViewBreadcrumb'])
         viewMenu.addAction(self.allActions['ViewShowChildPane'])
@@ -673,6 +692,8 @@ class TreeWindow(QMainWindow):
             self.rightTabs.setCurrentWidget(self.outputSplitter)
         elif action == self.allActions['ViewDataEditor']:
             self.rightTabs.setCurrentWidget(self.editorSplitter)
+        elif action == self.allActions['ViewThreeDView']:
+            self.rightTabs.setCurrentWidget(self.threeDView)
         else:
             self.rightTabs.setCurrentWidget(self.titleSplitter)
 
@@ -692,10 +713,12 @@ class TreeWindow(QMainWindow):
         Arguments:
             checked -- True if to be shown, False if to be hidden
         """
-        for tabNum in range(3):
-            for splitNum in range(2):
-                view = self.rightTabs.widget(tabNum).widget(splitNum)
-                view.hideChildView = not checked
+        for tabNum in range(3):  # Only affects the first 3 tabs with splitters
+            tab_widget = self.rightTabs.widget(tabNum)
+            if hasattr(tab_widget, 'widget'):
+                for splitNum in range(2):
+                    view = tab_widget.widget(splitNum)
+                    view.hideChildView = not checked
         self.updateRightViews()
 
     def viewDescendants(self, checked):

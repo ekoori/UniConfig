@@ -134,7 +134,7 @@ def setHistOptionDefaults(historyOptions):
     IntOptionItem(historyOptions, 'OutputSplitPercent', 20, 1, 99)
     IntOptionItem(historyOptions, 'EditorSplitPercent', 25, 1, 99)
     IntOptionItem(historyOptions, 'TitleSplitPercent', 10, 1, 99)
-    IntOptionItem(historyOptions, 'ActiveRightView', 0, 0, 2)
+    IntOptionItem(historyOptions, 'ActiveRightView', 0, 0, 3)
     IntOptionItem(historyOptions, 'PrintPrevXSize', 0, 0, 10000)
     IntOptionItem(historyOptions, 'PrintPrevYSize', 0, 0, 10000)
     IntOptionItem(historyOptions, 'PrintPrevXPos', -1000, -1000, 10000)
@@ -249,6 +249,8 @@ def setKeyboardOptionDefaults(keyboardOptions):
     KeyOptionItem(keyboardOptions, 'ViewDataEditor', 'Ctrl+Shift+E',
                   'View Menu')
     KeyOptionItem(keyboardOptions, 'ViewTitleList', 'Ctrl+Shift+T',
+                  'View Menu')
+    KeyOptionItem(keyboardOptions, 'ViewThreeDView', 'Ctrl+Shift+3',
                   'View Menu')
     KeyOptionItem(keyboardOptions, 'ViewBreadcrumb', '', 'View Menu')
     KeyOptionItem(keyboardOptions, 'ViewShowChildPane', 'Ctrl+Shift+C',
