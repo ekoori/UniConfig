@@ -191,15 +191,43 @@ Create a new format type.
 
 **Parameters:**
 - `name` (required): Name for the format type.
-- `fields` (required): List of field names.
+- `fields` (required): List of field definitions. Can be specified in multiple formats:
+  - Simple list of field names: `["Name", "Email", "Phone"]` (all fields default to Text type)
+  - List of field objects: `[{"name": "Name", "type": "Text"}, {"name": "Img", "type": "Picture"}]`
+  - Dictionary mapping field names to types: `{"Name": "Text", "Img": "Picture"}`
+
+**Available field types:**
+- `Text` - Standard text field (default)
+- `Number` - Numeric field
+- `Date` - Date field
+- `Time` - Time field
+- `DateTime` - Combined date/time field
+- `Boolean` - Boolean (true/false) field
+- `URL` - Web link field
+- `Picture` - Image field
+- `Math` - Calculation field
 
 **Example:**
 ```json
 {
   "action": "create_format_type",
   "parameters": {
+    "name": "IMAGE",
+    "fields": [
+      {"name": "Name", "type": "Text"},
+      {"name": "Img", "type": "Picture"}
+    ]
+  }
+}
+```
+
+Alternative format:
+```json
+{
+  "action": "create_format_type",
+  "parameters": {
     "name": "Contact",
-    "fields": ["Name", "Email", "Phone", "Address"]
+    "fields": {"Name": "Text", "Email": "Text", "Phone": "Text", "Address": "Text"}
   }
 }
 ```

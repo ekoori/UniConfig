@@ -435,14 +435,43 @@ class AgentInterface:
         if not node:
             return {'status': 'error', 'message': f'Node not found: {node_id}'}
         
-        # Get parent for selection after delete
-        parent = node.parent
+        try:
+            # Get the node's title for the success message
+            node_title = node.title()
+            
+            # Direct approach for deleting the node
+            # Check if it's a root node
+            if node in self.tree_structure.childList:
+                # Remove from root node list
+                print(f"Removing root node: {node_title}")
+                self.tree_structure.childList.remove(node)
+            else:
+                # For child nodes, find all parents and remove the node from their childList
+                for parent_node in self.tree_structure.nodeDict.values():
+                    if node in parent_node.childList:
+                        print(f"Removing node from parent: {parent_node.title()}")
+                        parent_node.childList.remove(node)
+            
+            # Remove any spot references to this node
+            for spot_ref in list(node.spotRefs):  # Create a copy to iterate over while modifying
+                node.spotRefs.remove(spot_ref)
+            
+            # Remove from dictionary
+            if node.uId in self.tree_structure.nodeDict:
+                print(f"Removing node from nodeDict: {node.uId}")
+                del self.tree_structure.nodeDict[node.uId]
+            
+            # Update the UI
+            self.local_control.updateAll(True)  # Force update
+            
+            return {'status': 'success', 'message': f'Node "{node_title}" deleted successfully'}
+            
+        except Exception as e:
+            import traceback
+            print(f"Error deleting node: {str(e)}")
+            print(traceback.format_exc())
+            return {'status': 'error', 'message': f'Failed to delete node: {str(e)}'}
         
-        # Use TreeLocalControl's delete command (handles undo/redo)
-        spot = self.tree_structure.nodeDict.get(node.uId)
-        self.local_control.deleteNode(spot)
-        
-        return {'status': 'success', 'message': 'Node deleted'}
     
     def _action_move_node(self, node_id=None, target_parent_id=None, position=None):
         """Move a node to a new parent or position.
@@ -586,19 +615,90 @@ class AgentInterface:
         
         Args:
             name: Name for the format type
-            fields: List of field names
+            fields: List of field names or field definitions
             
         Returns:
             Dictionary with result status
         """
         # Check if format already exists
         if name in self.tree_structure.treeFormats:
-            return {'status': 'error', 'message': 'Format type already exists'}
-            
-        # Create new format through TreeLocalControl (handles undo/redo)
-        self.local_control.createNewFormat(name, fields)
+            return {'status': 'error', 'message': f'Format type "{name}" already exists'}
         
-        return {'status': 'success', 'message': 'Format type created'}
+        try:
+            # Import required modules
+            import nodeformat
+            
+            # Create a new node format in the tree structure's format collection
+            new_format = nodeformat.NodeFormat(name, self.tree_structure.treeFormats, addDefaultField=True)
+            
+            # Process the fields list
+            field_names_added = []
+            
+            # Handle different formats of the fields parameter
+            if isinstance(fields, list):
+                # Process a simple list of field names
+                for field_item in fields:
+                    if isinstance(field_item, dict):
+                        # Format: {"name": "FieldName", "type": "FieldType", ...}
+                        field_name = field_item.get('name')
+                        field_type = field_item.get('type', 'Text')
+                        if field_name:
+                            field_data = {'fieldtype': field_type}
+                            # Add other field properties if provided
+                            for key, value in field_item.items():
+                                if key not in ['name', 'type']:
+                                    field_data[key] = value
+                            new_format.addField(field_name, field_data)
+                            field_names_added.append(field_name)
+                    else:
+                        # Simple string field name, default to Text type
+                        new_format.addField(field_item)
+                        field_names_added.append(field_item)
+            elif isinstance(fields, dict):
+                # Format: {"FieldName": "FieldType", ...}
+                for field_name, field_type in fields.items():
+                    field_data = {'fieldtype': field_type}
+                    new_format.addField(field_name, field_data)
+                    field_names_added.append(field_name)
+                    
+            # Add the format to the tree structure
+            self.tree_structure.treeFormats[name] = new_format
+            
+            # Update format references
+            self.tree_structure.treeFormats.updateDerivedRefs()
+            
+            # Create title line and output lines based on fields
+            title_parts = []
+            output_parts = []
+            for field_name in field_names_added:
+                title_parts.append('{{*{0}*}}'.format(field_name))
+                output_parts.append('{{*{0}*}}'.format(field_name))
+            
+            # If we have multiple fields, create a nice title format
+            if len(field_names_added) > 1:
+                new_format.changeTitleLine(' '.join(title_parts))
+                new_format.changeOutputLines([' '.join(output_parts)])
+            
+            # Force the tree structure's undo setup to capture this change
+            if self.tree_structure.undoList:
+                # Create an undo object to capture this format change
+                undo.FormatUndo(self.tree_structure.undoList, 
+                                self.tree_structure.treeFormats,
+                                treeformats.TreeFormats())
+            
+            # Update any UI components
+            self.local_control.updateAll(True)
+            
+            return {
+                'status': 'success', 
+                'message': f'Format type "{name}" created with fields: {", ".join(field_names_added)}'
+            }
+            
+        except Exception as e:
+            import traceback
+            print(f"Error creating format type: {str(e)}")
+            print(traceback.format_exc())
+            return {'status': 'error', 'message': f'Failed to create format type: {str(e)}'}
     
     def _action_get_tree_structure(self, max_depth=3):
         """Get the overall tree structure.
