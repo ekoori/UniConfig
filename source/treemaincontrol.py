@@ -39,6 +39,7 @@ import miscdialogs
 import conditional
 import colorset
 import helpview
+import agentinterface
 try:
     from __main__ import __version__, __author__
 except ImportError:
@@ -80,6 +81,7 @@ class TreeMainControl(QObject):
         self.findReplaceDialog = None
         self.filterTextDialog = None
         self.filterConditionDialog = None
+        self.aiAgentDialog = None
         self.basicHelpView = None
         self.passwords = {}
         self.creatingLocalControlFlag = False
@@ -682,6 +684,12 @@ class TreeMainControl(QObject):
         toolsFilterConditionAct.triggered.connect(self.
                                                   toolsFilterConditionDialog)
         self.allActions['ToolsFilterCondition'] = toolsFilterConditionAct
+        
+        toolsAIAgentAct = QAction(_('&AI Assistant...'), self,
+                       statusTip=_('Open the AI assistant dialog'),
+                       checkable=True)
+        toolsAIAgentAct.triggered.connect(self.toolsAIAgentDialog)
+        self.allActions['ToolsAIAgent'] = toolsAIAgentAct
 
         toolsGenOptionsAct = QAction(_('&General Options...'), self,
                              statusTip=_('Set user preferences for all files'))
@@ -963,6 +971,23 @@ class TreeMainControl(QObject):
             self.filterConditionDialog.show()
         else:
             self.filterConditionDialog.close()
+            
+    def toolsAIAgentDialog(self, show):
+        """Show or hide the non-modal AI agent dialog.
+        
+        Arguments:
+            show -- true if dialog should be shown, false to hide it
+        """
+        if show:
+            if not self.aiAgentDialog:
+                self.aiAgentDialog = agentinterface.AgentDialog(self.activeControl)
+                toolsAIAgentAct = self.allActions['ToolsAIAgent']
+                self.aiAgentDialog.dialogShown = self.aiAgentDialog.finished
+                self.aiAgentDialog.dialogShown.connect(lambda: 
+                                                     toolsAIAgentAct.setChecked(False))
+            self.aiAgentDialog.show()
+        else:
+            self.aiAgentDialog.close()
 
     def toolsGenOptions(self):
         """Set general user preferences for all files.

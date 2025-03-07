@@ -219,6 +219,7 @@ def setKeyboardOptionDefaults(keyboardOptions):
     KeyOptionItem(keyboardOptions, 'ToolsFindReplace', '', 'Tools Menu')
     KeyOptionItem(keyboardOptions, 'ToolsFilterText', '', 'Tools Menu')
     KeyOptionItem(keyboardOptions, 'ToolsFilterCondition', '', 'Tools Menu')
+    KeyOptionItem(keyboardOptions, 'ToolsAIAgent', '', 'Tools Menu')
     KeyOptionItem(keyboardOptions, 'ToolsSpellCheck', '', 'Tools Menu')
     KeyOptionItem(keyboardOptions, 'ToolsGenOptions', '', 'Tools Menu')
     KeyOptionItem(keyboardOptions, 'ToolsShortcuts', '', 'Tools Menu')

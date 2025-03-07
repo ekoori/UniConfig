@@ -594,6 +594,8 @@ class TreeWindow(QMainWindow):
         toolsMenu.addAction(self.allActions['ToolsFilterText'])
         toolsMenu.addAction(self.allActions['ToolsFilterCondition'])
         toolsMenu.addSeparator()
+        toolsMenu.addAction(self.allActions['ToolsAIAgent'])
+        toolsMenu.addSeparator()
         toolsMenu.addAction(self.allActions['ToolsSpellCheck'])
         toolsMenu.addSeparator()
         toolsMenu.addAction(self.allActions['ToolsGenOptions'])
